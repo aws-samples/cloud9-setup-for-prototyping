@@ -1,0 +1,121 @@
+#!/bin/bash
+
+set -eu
+
+export AWS_PAGER=""
+
+PARAMS_NAME=$(cat params.json | jq -r '.name')
+PARAMS_DESCRIPTION=$(cat params.json | jq -r '.description')
+PARAMS_INSTANCE_TYPE=$(cat params.json | jq -r '.instance_type')
+PARAMS_IMAGE_ID=$(cat params.json | jq -r '.image_id')
+PARAMS_TIME=$(cat params.json | jq -r '.automatic_stop_time_minutes')
+PARAMS_VOLUME_SIZE=$(cat params.json | jq -r '.volume_size')
+
+echo 'Cloud9 Setup for Prototyping'
+echo 'Parameters'
+echo '-' $PARAMS_NAME
+echo '-' $PARAMS_DESCRIPTION
+echo '-' $PARAMS_INSTANCE_TYPE
+echo '-' $PARAMS_IMAGE_ID
+echo '-' $PARAMS_TIME
+echo '-' $PARAMS_VOLUME_SIZE
+echo 'Create Cloud9 Environment'
+
+CLOUD9_ENV=$(aws cloud9 create-environment-ec2 \
+                 --name $PARAMS_NAME \
+                 --description "$PARAMS_DESCRIPTION" \
+                 --instance-type $PARAMS_INSTANCE_TYPE \
+                 --image-id $PARAMS_IMAGE_ID \
+                 --automatic-stop-time-minutes $PARAMS_TIME \
+                 | jq -r '.environmentId')
+echo 'Envorinment ID' $CLOUD9_ENV
+echo 'Waiting for the creation to be completed'
+
+CLOUD9_STATUS="CREATING"
+
+while [ "$CLOUD9_STATUS" = "CREATING" ]
+do
+    echo -n '.'
+    sleep 1
+    CLOUD9_STATUS=$(aws cloud9 describe-environments \
+                        --environment-ids $CLOUD9_ENV \
+                        | jq -r '.environments[0].lifecycle.status')
+done
+
+echo ' Completed!'
+echo 'Disable managed credentials'
+
+aws cloud9 update-environment \
+    --environment-id $CLOUD9_ENV \
+    --managed-credentials-action DISABLE
+
+EC2_INSTANCE=$(aws ec2 describe-instances \
+                   --filters Name=tag:aws:cloud9:environment,Values=$CLOUD9_ENV \
+                   | jq -r '.Reservations[0].Instances[0]')
+
+EC2_INSTANCE_ID=$(echo $EC2_INSTANCE | jq -r '.InstanceId')
+EC2_VOLUME_ID=$(echo $EC2_INSTANCE | jq -r '.BlockDeviceMappings[0].Ebs.VolumeId')
+
+echo 'Modify volume size'
+
+aws ec2 modify-volume \
+    --volume-id $EC2_VOLUME_ID \
+    --size $PARAMS_VOLUME_SIZE
+
+echo 'Create IAM Role'
+
+aws iam create-role \
+    --role-name $EC2_INSTANCE_ID \
+    --assume-role-policy-document file://trust-policy.json
+
+echo 'Attach AdministratorAccess'
+
+aws iam attach-role-policy \
+    --role-name $EC2_INSTANCE_ID \
+    --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+
+echo 'Create Instance Profile'
+
+aws iam create-instance-profile \
+    --instance-profile-name $EC2_INSTANCE_ID
+
+echo 'Add IAM Role to the Instance Profile'
+
+aws iam add-role-to-instance-profile \
+    --role-name $EC2_INSTANCE_ID \
+    --instance-profile-name $EC2_INSTANCE_ID
+
+echo 'Sleep for a while...'
+
+sleep 10
+
+echo 'Associate the Instance Profile with the EC2 Instance'
+
+aws ec2 associate-iam-instance-profile --instance-id $EC2_INSTANCE_ID --iam-instance-profile Name=$EC2_INSTANCE_ID
+
+echo 'Reboot EC2 Instance'
+
+aws ec2 reboot-instances --instance-ids $EC2_INSTANCE_ID
+
+SSM_READY=''
+
+while [ "$SSM_READY" != "$EC2_INSTANCE_ID" ]
+do
+    echo -n '.'
+    sleep 1
+    SSM_READY=$(aws ssm describe-instance-information \
+                    | jq -r ".InstanceInformationList[] | select(.InstanceId == \"$EC2_INSTANCE_ID\") | .InstanceId")
+done
+
+echo 'Update AWS Command to Version 2.x'
+
+aws ssm send-command \
+    --document-name "AWS-RunShellScript" \
+    --document-version "1" \
+    --targets "[{\"Key\":\"InstanceIds\",\"Values\":[\"$EC2_INSTANCE_ID\"]}]" \
+    --parameters '{"workingDirectory":["/home/ec2-user/environment"],"executionTimeout":["600"],"commands":["curl \"https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip\" -o \"awscliv2.zip\"","unzip awscliv2.zip","sudo ./aws/install","rm -rf aws awscliv2.zip"]}' \
+    --timeout-seconds 600 \
+    --max-concurrency "1" \
+    --max-errors "0"
+
+echo 'Done!'
