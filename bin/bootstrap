@@ -89,7 +89,7 @@ aws iam add-role-to-instance-profile \
 
 echo 'Sleep for a while...'
 
-sleep 10
+sleep 20
 
 echo 'Associate the Instance Profile with the EC2 Instance'
 
