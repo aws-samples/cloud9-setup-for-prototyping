@@ -12,6 +12,7 @@ PARAMS_INSTANCE_TYPE=$(cat params.json | jq -r '.instance_type')
 PARAMS_IMAGE_ID=$(cat params.json | jq -r '.image_id')
 PARAMS_TIME=$(cat params.json | jq -r '.automatic_stop_time_minutes')
 PARAMS_VOLUME_SIZE=$(cat params.json | jq -r '.volume_size')
+PARAMS_EIP="$(cat params.json | jq -r '.attach_eip')"
 
 echo 'Cloud9 Setup for Prototyping'
 echo 'Parameters'
@@ -21,6 +22,7 @@ echo '-' $PARAMS_INSTANCE_TYPE
 echo '-' $PARAMS_IMAGE_ID
 echo '-' $PARAMS_TIME
 echo '-' $PARAMS_VOLUME_SIZE
+echo '-' 'eip:' $PARAMS_EIP
 echo 'Create Cloud9 Environment'
 
 CLOUD9_ENV=$(aws cloud9 create-environment-ec2 \
@@ -119,5 +121,14 @@ aws ssm send-command \
     --timeout-seconds 600 \
     --max-concurrency "1" \
     --max-errors "0"
+
+if [ "$PARAMS_EIP" = "true" ]; then
+    echo 'Attatch Elastic IP'
+    EIP=$(aws ec2 allocate-address)
+    ALLOCATION_ID=$(echo $EIP | jq -r '.AllocationId')
+    PUBLIC_IP=$(echo $EIP | jq -r '.PublicIp')
+    aws ec2 associate-address --instance $EC2_INSTANCE_ID --allocation-id $ALLOCATION_ID
+    echo 'Elastic IP:' $PUBLIC_IP
+fi
 
 echo 'Done!'

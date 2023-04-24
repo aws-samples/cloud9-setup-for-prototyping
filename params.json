@@ -4,5 +4,6 @@
   "instance_type": "m5.large",
   "image_id": "amazonlinux-2-x86_64",
   "automatic_stop_time_minutes": 30,
-  "volume_size": 128
+  "volume_size": 128,
+  "attach_eip": false
 }
