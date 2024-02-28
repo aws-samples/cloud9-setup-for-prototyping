@@ -2,7 +2,7 @@
   "name": "cloud9-for-prototyping",
   "description": "Created by cloud9-setup-for-prototyping",
   "instance_type": "t2.large",
-  "image_id": "amazonlinux-2-x86_64",
+  "image_id": "amazonlinux-2023-x86_64",
   "automatic_stop_time_minutes": 30,
   "volume_size": 128,
   "attach_eip": false
